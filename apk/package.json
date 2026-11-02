@@ -1,0 +1,11 @@
+{
+  "name": "lakas-android-shell",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Android wrapper that opens the Lakas web app, so app updates arrive without reinstalling.",
+  "dependencies": {
+    "@capacitor/android": "6.2.0",
+    "@capacitor/cli": "6.2.0",
+    "@capacitor/core": "6.2.0"
+  }
+}
