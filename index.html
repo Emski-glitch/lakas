@@ -139,6 +139,8 @@ textarea{resize:vertical;min-height:84px}
 .sheet-panel{background:var(--bg);width:100%;max-width:560px;max-height:92%;overflow-y:auto;border-radius:18px 18px 0 0;
   padding-block:14px calc(18px + env(safe-area-inset-bottom, 0px));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px));display:flex;flex-direction:column;gap:12px}
 .sheet-panel>*{flex-shrink:0}
+.qtyin{width:64px!important;text-align:center;padding:7px 4px!important;font-family:var(--font-num);font-variant-numeric:tabular-nums}
+.qtyrow{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .sel{border:2px solid var(--accent);border-radius:var(--r);padding:12px;background:var(--surface);display:flex;flex-direction:column;gap:10px}
 .result{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:none;border:0;border-top:1px solid var(--line);padding:10px 2px;cursor:pointer}
 .result:first-child{border-top:0}
@@ -668,7 +670,7 @@ function defaultProfile(){return{
   stepGoal:8000, waterGoal:10, sleepGoal:7,
   trainDays:[1,3,5], sportDays:[2,6],
   platesKg:40, barKg:7, handleKg:2, smallestPlate:1.25,
-  ladders:{}, customFoods:[], nextWorkout:"A"
+  ladders:{}, customFoods:[], nextWorkout:"A", autoAdjust:false, lastCheckin:null
 }}
 function normDay(d){return Object.assign({foods:[],weight:null,waist:null,steps:null,water:0,sleep:null,complete:false,habits:{}},d||{})}
 
@@ -726,8 +728,9 @@ async function geminiJSON(prompt,opts){
 try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist().catch(()=>{});}catch(e){}
 
 /* App version and update notes. Bump APP_VERSION here and VERSION in sw.js together. */
-const APP_VERSION="1.3.0";
+const APP_VERSION="1.4.0";
 const WHATS_NEW=[
+  {v:"1.4.0",date:"Nov 3, 2026",items:["Type any food amount: servings like 0.75, or grams and ml when the serving has a weight","Weekly calorie check-in: Lakas suggests a new target from your weight trend, or updates it for you if you turn that on in More","One-tap Switch button when you've outgrown an exercise variation"]},
   {v:"1.3.0",date:"Nov 3, 2026",items:["Almost 200 more foods: Jollibee, McDo, Chowking, Mang Inasal, KFC, Greenwich, Shakey's, Max's, Andok's, 7-Eleven and more","Filipino brands: Lucky Me, Century Tuna, Argentina, Ligo, Bear Brand, Milo, C2, Piattos and more, plus kakanin, street food, silog and fruit","Browse buttons by restaurant and food type when you open Add food","Scan a barcode to look up packaged food online, or search the online database by name","Photo logging now reads nutrition labels"]},
   {v:"1.2.0",date:"Nov 3, 2026",items:["Smoother app: animated screens, sheets you can swipe down, and your phone's back button closes them","Calorie ring on Today, tap-to-fill water glasses, and your weekly workout streak","A workout summary with new personal bests when you finish","Quick setup screens, a Tagalog greeting, and a dark mode switch in More","Undo when you remove a food, and proper confirm boxes before deleting anything","The workout won't save a barbell or dumbbell set without its weight, so your progress numbers stay right","Fixed: a surprise reload on first open, the rest timer covering buttons, the food sheet jumping to the top, and the date not changing at midnight"]},
   {v:"1.1.0",date:"Nov 3, 2026",items:["Photo food logging: snap your plate and the AI lists each food with an estimated weight","Describe a meal in Taglish and the AI logs it","Uses a free Google Gemini key you add in More → AI food logging","Fixed: the meal and tab buttons in Add food got squashed when results were long"]},
@@ -879,6 +882,7 @@ function vToday(){
   ${dateNav()}
   ${askY?`<div class="card flat"><b>Did you log everything yesterday?</b><span class="small">You logged <span class="num">${fmt(dayTotals(yd).kcal)}</span> kcal. Only complete days teach your calorie estimate.</span><div class="row"><button class="btn sm" data-act="y-complete" data-v="1">Yes, all of it</button><button class="btn sm ghost" data-act="y-complete" data-v="0">Not everything</button></div></div>`:""}
   ${wn?`<div class="card good"><div class="label">Updated to version ${esc(wn.v)}</div><ul style="margin:0;padding-left:18px">${wn.items.map(i=>`<li>${esc(i)}</li>`).join("")}</ul><button class="btn sm" data-act="whatsnew-ok" style="align-self:flex-start">Got it</button></div>`:""}
+  ${k===todayKey()?checkinCard():""}
   ${tg.note?`<div class="card note"><b>${esc(tg.note)}</b><span class="small">Week ${wk} of your plan. Target is your estimated maintenance, ${fmt(tg.kcal)} kcal. Back to the deficit after week 10.</span></div>`:""}
   ${miss?`<div class="card note"><b>Never miss twice.</b><span class="small">You missed your last session. Today keeps the chain going. Short on time? Do the 20-minute minimum.</span></div>`:""}
   <section class="card" aria-label="Calories and macros">
@@ -920,8 +924,8 @@ function vFood(){
     const y=getDay(addDays(k,-1)).foods.filter(e=>e.meal===id);
     return `<section class="card"><div class="row between"><div><h3>${fil}</h3><div class="small muted">${en}${items.length?` · <span class="num">${fmt(mt)}</span> kcal · <span class="num">${fmt(mp)}</span> g protein`:""}</div></div>
       <button class="btn sm" data-act="add-open" data-meal="${id}">+ Add</button></div>
-      ${items.length?`<div class="list">${items.map(e=>`<div class="item"><div class="grow"><div>${esc(e.name)}${e.src==="ai"?` <span class="pill sun">AI est.</span>`:""}</div><div class="meta">${esc(e.serving)} · <span class="num">${fmt(e.p*e.qty)}</span> g P</div></div>
-        <div class="stepper"><button class="iconbtn" data-act="qty" data-id="${e.id}" data-n="-0.5" aria-label="Less">−</button><span class="num small">${r1(e.qty)}×</span><button class="iconbtn" data-act="qty" data-id="${e.id}" data-n="0.5" aria-label="More">+</button></div>
+      ${items.length?`<div class="list">${items.map(e=>`<div class="item"><div class="grow"><div>${esc(e.name)}${e.src==="ai"?` <span class="pill sun">AI est.</span>`:""}</div><div class="meta">${(()=>{const su=servingUnit(e.serving);return su?`≈<span class="num">${fmt(su.n*e.qty)}</span> ${su.u} · `:""})()}${esc(e.serving)} · <span class="num">${fmt(e.p*e.qty)}</span> g P</div></div>
+        <div class="stepper"><button class="iconbtn" data-act="qty" data-id="${e.id}" data-n="-0.5" aria-label="Less">−</button>${qtyInput("q-"+e.id,e.qty,`data-f="entry.qty" data-id="${e.id}"`)}<button class="iconbtn" data-act="qty" data-id="${e.id}" data-n="0.5" aria-label="More">+</button></div>
         <span class="kcal">${fmt(e.kcal*e.qty)}</span></div>`).join("")}</div>`:
       (y.length?`<button class="linkbtn" data-act="copy-meal" data-meal="${id}" style="align-self:flex-start">Copy yesterday's ${fil.toLowerCase()} (${y.length} item${y.length>1?"s":""})</button>`:`<div class="small muted">Nothing logged.</div>`)}
     </section>`}).join("");
@@ -971,7 +975,7 @@ function vLogger(){
       <div class="row between"><div class="grow"><h3>${esc(ex.ladder[e.rung])}</h3><div class="small muted">${e.sets.length} × ${ex.rmin}–${ex.rmax} · RIR ${esc(dr.rir[ei])} · rest ${Math.round(ex.rest/60*10)/10} min · tempo ${ex.tempo}</div></div>
       <button class="linkbtn" data-act="cue" data-ei="${ei}">${open?"Hide":"How"}</button></div>
       ${open?`<div class="small">${esc(ex.cue)}</div><label class="field"><span>Variation</span><select id="var-${ei}" data-f="rung" data-ei="${ei}">${ex.ladder.map((n,i)=>`<option value="${i}" ${i===e.rung?"selected":""}>${i+1}. ${esc(n)}</option>`).join("")}</select></label>`:""}
-      <div class="tip ${sg.kind==="up"?"up":sg.kind==="cap"?"cap":""}">${esc(sg.text||"")}</div>
+      <div class="tip ${sg.kind==="up"?"up":sg.kind==="cap"?"cap":""}">${esc(sg.text||"")}${sg.upgrade&&e.rung<ex.ladder.length-1?`<div style="margin-top:8px"><button class="btn sm" data-act="switch-rung" data-ei="${ei}">Switch to ${esc(ex.ladder[e.rung+1])}</button></div>`:""}</div>
       <div class="sets"><span class="hd">Set</span><span class="hd">${bw?"":esc(LOAD_LABEL[ex.load])}</span><span class="hd">Reps</span><span class="hd">RIR</span><span></span>${rows}</div>
       <div class="row"><button class="btn sm soft" data-act="add-set" data-ei="${ei}">+ Set</button>${e.sets.length>1?`<button class="btn sm ghost" data-act="rm-set" data-ei="${ei}">− Set</button>`:""}</div>
     </section>`}).join("");
@@ -1080,6 +1084,7 @@ function vMore(){
   const dayBtns=(key)=>days.map((n,i)=>`<button aria-pressed="${p[key].includes(i)}" data-act="toggle-day" data-key="${key}" data-i="${i}">${n}</button>`).join("");
   return `<div class="stack">
   <section class="card"><h3>Targets</h3>
+    <label class="check"><input id="s-auto" type="checkbox" data-f="p.autoAdjust" ${p.autoAdjust?"checked":""}><span>Update my calorie target automatically each week <span class="small muted">(otherwise Lakas asks first; changes are capped at 200 kcal a week)</span></span></label>
     <div class="grid2">${numField("s-kcal","Calories (kcal)","p.kcal",p.kcal,50)}${numField("s-protein","Protein (g)","p.protein",p.protein,5)}
     ${numField("s-floor","Protein floor (g)","p.proteinFloor",p.proteinFloor,5)}${numField("s-fat","Fat (g)","p.fat",p.fat,5)}</div>
     <div class="small muted">Carbs fill the rest: <span class="num">${carbsFor(p.kcal,p.protein,p.fat)}</span> g.</div>
@@ -1133,6 +1138,8 @@ function vMore(){
 /* ---------------- Food sheet ---------------- */
 const sheetEl=document.getElementById("sheet");
 function allFoods(){return [...P().customFoods.map(f=>Object.assign({cat:"My foods",alias:"",custom:true},f)),...FOODS]}
+function servingUnit(serving){const m=String(serving||"").match(/(\d+(?:\.\d+)?)\s*(g|ml)\b/i);return m?{n:+m[1],u:m[2].toLowerCase()}:null}
+function qtyInput(id,val,attrs){return `<input id="${id}" class="qtyin" type="number" inputmode="decimal" step="any" min="0" value="${Math.round(val*100)/100}" ${attrs} aria-label="Servings">`}
 function foodById(id){return FOOD_MAP[id]||P().customFoods.find(f=>f.id===id)||(S.ui.sheet&&S.ui.sheet.extra&&S.ui.sheet.extra[id])}
 const BROWSE=[["Jollibee","jollibee"],["McDonald's","mcdonald's"],["Chowking","chowking"],["Mang Inasal","mang inasal"],["KFC","kfc"],["Greenwich","greenwich"],["Shakey's","shakey's"],["Max's","max's"],["Andok's","andok's"],["Bonchon","bonchon"],["Potato Corner","potato corner"],["7-Eleven","7-eleven"],["Starbucks","starbucks"],["Bakeshop","bakeshop"],["Silog","silog"],["Ulam","ulam"],["Noodles","noodles"],["Canned","canned"],["Drinks","drinks"],["Snacks","snacks"],["Kakanin","kakanin"],["Street food","street food"],["Fruit","fruit"]];
 /* Open Food Facts: free online database of packaged foods (used for barcodes and online search). */
@@ -1192,7 +1199,8 @@ function renderSheet(){
   if(sh.tab==="search"){
     let sel="";if(sh.sel){const f=foodById(sh.sel.fid);const q=sh.sel.qty;
       sel=`<div class="sel"><div class="row between"><div class="grow"><b>${esc(f.name)}</b><div class="small muted">${esc(f.serving)}</div></div>
-      <div class="stepper"><button class="iconbtn" data-act="sel-qty" data-n="-0.5" aria-label="Less">−</button><span class="num">${r1(q)}×</span><button class="iconbtn" data-act="sel-qty" data-n="0.5" aria-label="More">+</button></div></div>
+      <div class="stepper"><button class="iconbtn" data-act="sel-qty" data-n="-0.5" aria-label="Less">−</button>${qtyInput("sel-qty",q,'data-f="sel.qty"')}<button class="iconbtn" data-act="sel-qty" data-n="0.5" aria-label="More">+</button></div></div>
+      ${(()=>{const su=servingUnit(f.serving);return su?`<label class="field"><span>Or type the amount in ${su.u} (1 serving = ${fmt(su.n)} ${su.u})</span><input id="sel-g" type="number" inputmode="decimal" step="any" min="0" value="${Math.round(su.n*q)}" data-f="sel.g"></label>`:`<div class="small muted">Type any amount, like 0.75 or 2.5 servings.</div>`})()}
       ${f.off?`<div class="small muted">From the online database. Added foods are saved to My foods.</div>`:""}<div class="grid3 small"><span><span class="num">${fmt(f.kcal*q)}</span> kcal</span><span><span class="num">${r1(f.p*q)}</span> g protein</span><span><span class="num">${r1(f.c*q)}</span> C · <span class="num">${r1(f.f*q)}</span> F</span></div>
       <button class="btn block" data-act="add-sel">Add to ${esc(MEALS.find(m=>m[0]===sh.meal)[1])}</button></div>`;}
     const sc=sh.scan;const scan=`<div class="row"><label class="btn sm soft" for="bc-photo">Scan barcode</label><input id="bc-photo" type="file" accept="image/*" capture="environment" hidden>${sc&&sc.status==="busy"?`<span class="small muted">${esc(sc.msg)}</span>`:""}</div>
@@ -1206,7 +1214,7 @@ function renderSheet(){
         :`<div class="row"><label class="btn" for="ai-photo">Take photo</label><label class="btn soft" for="ai-photo-g">Choose from gallery</label></div><input id="ai-photo" type="file" accept="image/*" capture="environment" hidden><input id="ai-photo-g" type="file" accept="image/*" hidden>
           <div class="small muted">Best results: the whole plate in frame, shot at an angle, with a spoon or your hand beside it for scale.</div>${sh.photo?`<img src="${sh.photo.url}" alt="Your meal photo" style="border-radius:12px;max-height:220px;object-fit:cover">`:""}<label class="field"><span>Anything the photo can't show? (optional)</span><input id="ai-note" type="text" placeholder="e.g. rice was 1.5 cups, fried in oil" value="${esc(sh.aiNote||"")}"></label>`;
       const items=ai.items.length?`<div class="list">${ai.items.map((it,i)=>`<div class="item"><label class="check grow"><input id="ai-inc-${i}" type="checkbox" data-f="ai.inc" data-i="${i}" ${it.inc?"checked":""}><div class="grow"><div style="font-weight:600">${esc(it.name)} ${it.fid?`<span class="pill accent">Database</span>`:`<span class="pill sun">Estimate</span>`}</div><div class="small muted">${it.g0?`≈<span class="num">${fmt(it.g0*it.qty/it.q0)}</span> g · `:""}${esc(it.serving)} · <span class="num">${fmt(it.kcal*it.qty)}</span> kcal · <span class="num">${r1(it.p*it.qty)}</span> g P</div></div></label>
-        <div class="stepper"><button class="iconbtn" data-act="ai-qty" data-i="${i}" data-n="-0.5" aria-label="Less">−</button><span class="num small">${r1(it.qty)}×</span><button class="iconbtn" data-act="ai-qty" data-i="${i}" data-n="0.5" aria-label="More">+</button></div></div>`).join("")}</div>
+        <div class="stepper"><button class="iconbtn" data-act="ai-qty" data-i="${i}" data-n="-0.5" aria-label="Less">−</button>${qtyInput("ai-q-"+i,it.qty,`data-f="ai.qty" data-i="${i}"`)}<button class="iconbtn" data-act="ai-qty" data-i="${i}" data-n="0.5" aria-label="More">+</button></div></div>`).join("")}</div>
         ${ai.note?`<div class="small muted">${esc(ai.note)}</div>`:""}<button class="btn block" data-act="ai-add">Add ${ai.items.filter(x=>x.inc).length} item(s)</button>`:"";
       body=`${input}<div class="row">${ai.status==="busy"?`<span class="small muted grow">Estimating…</span><button class="btn sm ghost" data-act="ai-stop">Stop</button>`:`<button class="btn" data-act="ai-run" ${sh.tab==="photo"&&!sh.photo?"disabled":""}>Estimate</button>`}</div>
         ${ai.msg?`<div class="tip cap">${esc(ai.msg)}</div>`:""}${items}<div class="small muted">Weights from a photo are rough guesses, especially rice and cooking oil. Fix portions with − / + before adding. Matches from the Filipino list use its values.</div>`;}
@@ -1327,7 +1335,12 @@ const ACT={
   "sheet-meal":el=>{S.ui.sheet.meal=el.dataset.v;renderSheet();},
   "sheet-tab":el=>{const sh=S.ui.sheet;if(sh.tab==="ai")sh.aiText=document.getElementById("ai-text")?.value??sh.aiText;sh.tab=el.dataset.v;sh.ai={status:"idle",items:[],msg:"",note:""};renderSheet();},
   "pick":el=>{S.ui.sheet.sel={fid:el.dataset.id,qty:1};renderSheet();document.querySelector(".sel")?.scrollIntoView({block:"nearest"});},
-  "sel-qty":el=>{const s=S.ui.sheet.sel;s.qty=Math.max(0.5,s.qty+(+el.dataset.n));renderSheet();},
+  "sel-qty":el=>{const s=S.ui.sheet.sel;s.qty=Math.max(0.25,r1(s.qty+(+el.dataset.n)));renderSheet();},
+  "checkin-ok":()=>{S.ui.checkin=null;render();},
+  "checkin-undo":()=>{const c=S.ui.checkin;if(c){P().kcal=c.from;lsSave();}S.ui.checkin=null;render();toast(`Target back to ${fmt(P().kcal)} kcal.`);},
+  "checkin-apply":()=>{const c=S.ui.checkin;if(!c)return;P().kcal=c.to;P().lastCheckin=todayKey();lsSave();S.ui.checkin=null;buzz();render();toast(`Target set to ${fmt(c.to)} kcal.`);},
+  "checkin-keep":()=>{P().lastCheckin=todayKey();lsSave();S.ui.checkin=null;render();toast("Kept your target. You'll get another check-in next week.");},
+  "switch-rung":el=>{const ei=+el.dataset.ei,e=S.draft.ex[ei],ex=EX[e.id];if(e.rung>=ex.ladder.length-1)return;e.rung++;P().ladders[e.id]=e.rung;touch();S.draft.sugg[ei]=suggest(e.id,e.sets.length);lsSave();buzz();render();toast(`Switched to ${ex.ladder[e.rung]}. Pick a weight with ${ex.rir} reps left.`);},
   "browse":el=>{const sh=S.ui.sheet;sh.q=el.dataset.v;const i=document.getElementById("sheet-q");if(i)i.value=sh.q;renderResults();},
   "off-search":()=>runOnline(),
   "bc-lookup":()=>lookupBarcode(document.getElementById("bc-num")?.value||""),
@@ -1412,10 +1425,17 @@ document.addEventListener("change",e=>{
     if(k==="weight"&&d.weight>0){const tr=trendAt(trendMap(),S.ui.date);toast(`Weight saved. Trend ${r1(tr)} kg.`);}return;}
   if(f.startsWith("habit.")){const d=ensureDay(S.ui.date);d.habits=Object.assign({},d.habits,{[f.slice(6)]:el.checked});touch("d-"+S.ui.date);return;}
   if(f==="ui.minimum"){S.ui.minimum=el.checked;render();return;}
+  if(f==="sel.qty"||f==="sel.g"){const sh=S.ui.sheet;if(!sh||!sh.sel)return;const v=parseFloat(el.value);if(!(v>0)){renderSheet();return;}
+    if(f==="sel.qty")sh.sel.qty=Math.round(v*100)/100;else{const su=servingUnit(foodById(sh.sel.fid).serving);if(su)sh.sel.qty=Math.round(v/su.n*1000)/1000;}renderSheet();return;}
+  if(f==="ai.qty"){const it=S.ui.sheet&&S.ui.sheet.ai.items[+el.dataset.i];const v=parseFloat(el.value);if(it&&v>0)it.qty=Math.round(v*100)/100;renderSheet();return;}
+  if(f==="entry.qty"){const k=S.ui.date,d=ensureDay(k),i=d.foods.findIndex(x=>x.id===el.dataset.id);if(i<0)return;const e=d.foods[i],v=parseFloat(el.value);
+    if(el.value===""||!isFinite(v)){safeRender();return;}
+    if(v<=0){d.foods.splice(i,1);touch();safeRender();toast(`Removed ${e.name}`,{action:"Undo",onAction:()=>{const dd=ensureDay(k);dd.foods.splice(Math.min(i,dd.foods.length),0,e);touch();render();}});return;}
+    e.qty=Math.round(v*100)/100;touch();safeRender();return;}
   if(f==="ai.inc"){S.ui.sheet.ai.items[+el.dataset.i].inc=el.checked;renderSheet();return;}
   if(f.startsWith("set.")){const s=S.draft.ex[+el.dataset.ei].sets[+el.dataset.si];s[f.slice(4)]=el.value;lsSave();return;}
   if(f==="rung"){const ei=+el.dataset.ei,e=S.draft.ex[ei],r=+el.value;e.rung=r;P().ladders[e.id]=r;touch("profile");S.draft.sugg[ei]=suggest(e.id,e.sets.length);lsSave();render();return;}
-  if(f.startsWith("p.")){const k=f.slice(2);if(el.type==="text"){P()[k]=el.value.trim().slice(0,30);}else if(el.type==="date"){if(el.value)P()[k]=el.value;}else{const v=+el.value;if(el.value===""||!isFinite(v))return;P()[k]=v;}touch("profile");safeRender();return;}
+  if(f.startsWith("p.")){const k=f.slice(2);if(el.type==="checkbox"){P()[k]=el.checked;touch();safeRender();if(k==="autoAdjust")toast(el.checked?"Your target will update each week from your trend.":"You'll be asked before your target changes.");return;}if(el.type==="text"){P()[k]=el.value.trim().slice(0,30);}else if(el.type==="date"){if(el.value)P()[k]=el.value;}else{const v=+el.value;if(el.value===""||!isFinite(v))return;P()[k]=v;}touch("profile");safeRender();return;}
 });
 document.getElementById("timer").addEventListener("click",e=>{const b=e.target.closest("[data-act]");if(!b)return;e.stopPropagation();if(b.dataset.act==="timer-add"&&timer){timer.end+=30000;timer.total+=30000;}if(b.dataset.act==="timer-stop")stopTimer();},true);
 
@@ -1528,9 +1548,25 @@ window.addEventListener("appinstalled",()=>{deferredInstall=null;document.getEle
 function netState(){document.getElementById("offline-pill").hidden=navigator.onLine!==false;}
 window.addEventListener("online",netState);window.addEventListener("offline",netState);netState();
 
+/* Weekly calorie check-in (MacroFactor-style): uses your real maintenance from the weight trend. */
+function checkinProposal(){const p=P(),tm=trendMap(),ex=expenditure(tm),now=trendAt(tm,todayKey());
+  if(ex.conf<0.5||!now||isDietBreak(programWeek()))return null;
+  const ideal=Math.max(p.minKcal,round50(ex.est-p.goalRate/100*now*7700/7));const step=Math.max(-200,Math.min(200,ideal-p.kcal));
+  return {from:p.kcal,to:Math.max(p.minKcal,round50(p.kcal+step)),ideal,est:ex.est};}
+function runCheckin(){const p=P();if(!p.onboarded)return;const last=p.lastCheckin||p.startDate;if(diffDays(last,todayKey())<7)return;
+  const pr=checkinProposal();if(!pr)return;
+  if(Math.abs(pr.to-pr.from)<100){p.lastCheckin=todayKey();lsSave();S.ui.checkin={same:true,...pr};return;}
+  if(p.autoAdjust){p.kcal=pr.to;p.lastCheckin=todayKey();lsSave();S.ui.checkin={auto:true,...pr};return;}
+  S.ui.checkin={ask:true,...pr};}
+function checkinCard(){const c=S.ui.checkin;if(!c||S.ui.date!==todayKey())return"";
+  const why=`Your maintenance from your own data is about <span class="num">${fmt(c.est)}</span> kcal.`;
+  if(c.same)return `<div class="card good"><div class="label">Weekly check-in</div><b>Your target of ${fmt(c.from)} kcal still fits.</b><span class="small">${why} You're losing at about the planned rate.</span><button class="btn sm" data-act="checkin-ok" style="align-self:flex-start">Got it</button></div>`;
+  if(c.auto)return `<div class="card good"><div class="label">Weekly check-in</div><b>Target updated: ${fmt(c.from)} → ${fmt(c.to)} kcal</b><span class="small">${why} Changes are capped at 200 kcal a week.</span><div class="row"><button class="btn sm" data-act="checkin-ok">Got it</button><button class="btn sm ghost" data-act="checkin-undo">Undo</button></div></div>`;
+  return `<div class="card note"><div class="label">Weekly check-in</div><b>Change your target to ${fmt(c.to)} kcal?</b><span class="small">${why} To lose ${P().goalRate}% of your weight a week, ${c.to<c.from?"eat a little less":"you can eat a little more"}. Changes are capped at 200 kcal a week.</span><div class="row"><button class="btn sm" data-act="checkin-apply">Use ${fmt(c.to)} kcal</button><button class="btn sm ghost" data-act="checkin-keep">Keep ${fmt(c.from)}</button></div></div>`;}
+
 /* Roll over to the new day when the app stays open past midnight */
 let lastToday=todayKey();
-function checkDay(){const t=todayKey();if(t===lastToday)return;if(S.ui.date===lastToday)S.ui.date=t;lastToday=t;safeRender();}
+function checkDay(){const t=todayKey();if(t===lastToday)return;if(S.ui.date===lastToday)S.ui.date=t;lastToday=t;runCheckin();safeRender();}
 document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")checkDay();});setInterval(checkDay,60000);
 
 /* Updates: a new sw.js version installs in the background, then the green pill offers a reload. */
@@ -1546,6 +1582,7 @@ if("serviceWorker" in navigator&&location.protocol!=="file:"){
     let reloading=false;navigator.serviceWorker.addEventListener("controllerchange",()=>{if(reloading||!updateRequested)return;reloading=true;location.reload();});
   });
 }
+runCheckin();
 route();
 if(!P().onboarded)openOnboard(0);
 </script>
