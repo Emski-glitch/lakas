@@ -18,6 +18,17 @@ no ads, no paywall. Your data stays on your phone.
 
 Both load the app from the website, so you install once and updates arrive on their own.
 
+## AI food logging (optional)
+
+Snap your plate (Food → + Add → Photo) or describe a meal in Taglish, and the AI lists each
+food with an estimated weight for you to review. It uses Google Gemini with your own free key:
+
+1. Get a key at https://aistudio.google.com/apikey.
+2. Paste it in **More → AI food logging → Save and test**.
+
+The key stays on your phone and is not included in backups. On Google's free tier, Google may
+use what you send to improve its products. Weights from photos are rough, so check portions.
+
 ## How updates work
 
 1. A change is pushed to `main`.

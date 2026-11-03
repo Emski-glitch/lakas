@@ -138,6 +138,7 @@ textarea{resize:vertical;min-height:84px}
 .sheet{position:fixed;inset:0;z-index:20;background:color-mix(in srgb, #000 45%, transparent);display:flex;align-items:flex-end;justify-content:center}
 .sheet-panel{background:var(--bg);width:100%;max-width:560px;max-height:92%;overflow-y:auto;border-radius:18px 18px 0 0;
   padding-block:14px calc(18px + env(safe-area-inset-bottom, 0px));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px));display:flex;flex-direction:column;gap:12px}
+.sheet-panel>*{flex-shrink:0}
 .sel{border:2px solid var(--accent);border-radius:var(--r);padding:12px;background:var(--surface);display:flex;flex-direction:column;gap:10px}
 .result{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:none;border:0;border-top:1px solid var(--line);padding:10px 2px;cursor:pointer}
 .result:first-child{border-top:0}
@@ -407,13 +408,46 @@ function touch(){lsSave();}
 let pendingRender=false;
 function safeRender(){const a=document.activeElement;if(a&&a.matches&&a.matches("input,textarea,select")&&document.getElementById("view").contains(a)){pendingRender=true;return;}render();}
 document.addEventListener("focusout",()=>{if(pendingRender){setTimeout(()=>{if(pendingRender){pendingRender=false;safeRender();}},0)}});
-/* AI logging needs Claude, so it is off in the standalone app. */
-const sampleFn=null, aiImages=false;
+/* AI food logging: Google Gemini with the person's own free API key, kept only on this phone. */
+const AI_KEY="lakas-ai-key", AI_MODEL="lakas-ai-model";
+const AI_MODELS=["gemini-3.8-flash","gemini-3.6-flash","gemini-3.5-flash-lite","gemini-flash-latest","gemini-2.5-flash"];
+function aiKey(){try{return localStorage.getItem(AI_KEY)||""}catch(e){return""}}
+function aiModel(){try{const m=localStorage.getItem(AI_MODEL);return AI_MODELS.includes(m)?m:AI_MODELS[0]}catch(e){return AI_MODELS[0]}}
+function aiErrObj(code,detail){const e=new Error(detail||code);e.code=code;return e;}
+async function shrinkImage(file,max){
+  const url=URL.createObjectURL(file);
+  try{const img=await new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=()=>rej(aiErrObj("image_rejected"));i.src=url;});
+    const sc=Math.min(1,max/Math.max(img.naturalWidth,img.naturalHeight)),c=document.createElement("canvas");
+    c.width=Math.round(img.naturalWidth*sc);c.height=Math.round(img.naturalHeight*sc);c.getContext("2d").drawImage(img,0,0,c.width,c.height);
+    return c.toDataURL("image/jpeg",0.82).split(",")[1];}
+  finally{URL.revokeObjectURL(url);}}
+async function geminiJSON(prompt,opts){
+  opts=opts||{};const key=aiKey();if(!key)throw aiErrObj("no_key");
+  const parts=[{text:prompt}];if(opts.image)parts.push({inline_data:{mime_type:"image/jpeg",data:await shrinkImage(opts.image,1024)}});
+  const body=JSON.stringify({contents:[{role:"user",parts}],generationConfig:{temperature:0.2,responseMimeType:"application/json"}});
+  const first=aiModel(),order=[first,...AI_MODELS.filter(m=>m!==first)];let lastErr=null,retired=false;
+  for(const m of order){
+    let res;
+    try{res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:generateContent`,{method:"POST",headers:{"Content-Type":"application/json","x-goog-api-key":key},body,signal:opts.signal});}
+    catch(e){if(e&&e.name==="AbortError")throw aiErrObj("cancelled");throw aiErrObj("offline");}
+    if(res.status===404){retired=true;lastErr=aiErrObj("no_model");continue;}     // model retired: try the next one
+    if(res.status===429){lastErr=aiErrObj("rate_limited");continue;}               // free limit is per model: try the next one
+    if(!res.ok){const t=await res.text().catch(()=>"");
+      if(res.status===401||res.status===403||(res.status===400&&/api.?key/i.test(t)))throw aiErrObj("bad_key");
+      throw aiErrObj("upstream_error",t.slice(0,200));}
+    const j=await res.json().catch(()=>null);
+    if(retired&&m!==first){try{localStorage.setItem(AI_MODEL,m)}catch(e){}}
+    const cand=j&&j.candidates&&j.candidates[0];if(!cand||!cand.content)throw aiErrObj("refused");
+    const text=(cand.content.parts||[]).map(x=>x.text||"").join("");
+    try{return JSON.parse(text)}catch(e){const a=text.indexOf("{"),b=text.lastIndexOf("}");if(a>=0&&b>a){try{return JSON.parse(text.slice(a,b+1))}catch(_){}}throw aiErrObj("invalid_json");}
+  }
+  throw lastErr||aiErrObj("no_model");}
 try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist().catch(()=>{});}catch(e){}
 
 /* App version and update notes. Bump APP_VERSION here and VERSION in sw.js together. */
-const APP_VERSION="1.0.0";
+const APP_VERSION="1.1.0";
 const WHATS_NEW=[
+  {v:"1.1.0",date:"Nov 3, 2026",items:["Photo food logging: snap your plate and the AI lists each food with an estimated weight","Describe a meal in Taglish and the AI logs it","Uses a free Google Gemini key you add in More → AI food logging","Fixed: the meal and tab buttons in Add food got squashed when results were long"]},
   {v:"1.0.0",date:"Nov 3, 2026",items:["Lakas as an Android app: install from Chrome, or download the APK","Weight chart from 8 weeks up to all-time, plus a waist chart","Backups you can save to Google Drive or copy as text","Updates arrive on their own: tap the green pill when you see it"]}
 ];
 let seenVersion=null;try{seenVersion=localStorage.getItem("lakas-seen");if(!seenVersion)localStorage.setItem("lakas-seen",APP_VERSION);}catch(e){}
@@ -764,6 +798,14 @@ function vMore(){
   <section class="card"><h3>My foods</h3>
     ${p.customFoods.length?`<div class="list">${p.customFoods.map(f=>`<div class="item"><div class="grow"><div>${esc(f.name)}</div><div class="meta">${esc(f.serving)} · ${fmt(f.kcal)} kcal · ${r1(f.p)} g P</div></div><button class="linkbtn" data-act="del-custom" data-id="${f.id}">Remove</button></div>`).join("")}</div>`:`<div class="small muted">Save your family's recipes or campus meals from the food sheet (My foods tab).</div>`}
   </section>
+  <section class="card" id="ai-setup"><h3>AI food logging</h3>
+    <div class="small">Snap your plate and the AI lists each food with an estimated weight. It uses Google's Gemini, which has a free tier. Your key stays on this phone and is not in your backups.</div>
+    ${aiKey()?`<div class="row between"><span class="pill accent">Key saved · ends in ${esc(aiKey().slice(-4))}</span><button class="btn sm ghost" data-act="ai-remove">Remove key</button></div>`:
+    `<ol class="small" style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px"><li>Open <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> and sign in with your Google account.</li><li>Tap <b>Create API key</b>, then copy the key.</li><li>Paste it here and tap <b>Save and test</b>.</li></ol>
+    <label class="field"><span>Gemini API key</span><input id="ai-key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your key"></label>
+    <button class="btn sm" data-act="ai-save" style="align-self:flex-start">Save and test</button>`}
+    <div class="small muted">On Google's free tier, Google may use what you send to improve its products, so don't photograph anything private. Model in use: <span class="num">${esc(aiModel())}</span></div>
+  </section>
   <section class="card"><h3>Your data</h3>
     <div class="small">Everything is saved on this phone. No account, no ads, no tracking, no paywall. Save a backup now and then (Google Drive works), especially before a new phone.</div>
     <div class="row"><button class="btn sm" data-act="export">Save backup file</button><button class="btn sm soft" data-act="copy-backup">Copy backup as text</button></div>
@@ -778,7 +820,7 @@ function vMore(){
   </section>
   <section class="card flat"><h3>How Lakas differs</h3>
     <div class="small"><b>From MacroFactor:</b> the adaptive calorie estimate from your weight trend, and judgment-free colors. Here it's free, and only fully logged days count, so a forgotten dinner doesn't skew it.</div>
-    <div class="small"><b>From MyFitnessPal:</b> fast logging with recents and copy-yesterday. But no crowd-sourced junk entries: one curated list of Filipino foods, plus your own saved dishes.</div>
+    <div class="small"><b>From MyFitnessPal:</b> fast logging with recents and copy-yesterday. But no crowd-sourced junk entries: one curated list of Filipino foods, your own saved dishes, and photo logging with a free AI key, always shown for review before it's added.</div>
     <div class="small"><b>From Build With Science:</b> a real program with RIR, tempo and double progression. Plus a plate-limit ceiling, so the app tells you when 40 kg is maxed and what to do instead.</div>
     <div class="small"><b>New here:</b> never-miss-twice nudges, a 20-minute bad-week mode, planned diet breaks in weeks 9–10, and the stall guide from your program.</div>
     <a class="linkbtn" href="https://claude.ai/artifact/NQ9hL7Hcoh49yeFm88jMJp" target="_blank" rel="noopener" style="align-self:flex-start">Open your Home Recomp Program →</a>
@@ -802,7 +844,7 @@ function renderResults(){const el=document.getElementById("sheet-results");if(!e
   const h=document.getElementById("sheet-reshead");if(h)h.textContent=sh.q?"Results":"Recent";}
 function renderSheet(){
   const sh=S.ui.sheet;if(!sh)return;
-  const tabs=[["search","Search"],["quick","Quick add"],["mine","My foods"]];
+  const tabs=[["search","Search"],["photo","Photo"],["ai","Describe"],["quick","Quick add"],["mine","My foods"]];
   let body="";
   if(sh.tab==="search"){
     let sel="";if(sh.sel){const f=foodById(sh.sel.fid);const q=sh.sel.qty;
@@ -813,15 +855,16 @@ function renderSheet(){
     body=`<input id="sheet-q" type="text" placeholder="Search Filipino foods…" value="${esc(sh.q)}" autocomplete="off" aria-label="Search foods">${sel}<div class="label" id="sheet-reshead">${sh.q?"Results":"Recent"}</div><div id="sheet-results" class="list"></div>`;
   } else if(sh.tab==="ai"||sh.tab==="photo"){
     const ai=sh.ai;
-    if(!sampleFn) body=`<div class="empty">AI logging works when this page is open inside Claude. Search and Quick add work everywhere.</div>`;
+    if(!aiKey()) body=`<div class="card flat"><b>Set up AI logging first</b><span class="small">Snap your plate and the AI lists each food with an estimated weight. It needs a free Google Gemini key, which takes about 3 minutes to get.</span><a class="btn" href="#more" style="align-self:flex-start">Set it up</a></div>`;
     else{
       const input=sh.tab==="ai"?`<label class="field"><span>What did you eat? Taglish is fine.</span><textarea id="ai-text" placeholder="e.g. 1 tasa kanin, tinola 2 pcs manok, 1 boiled egg">${esc(sh.aiText||"")}</textarea></label>`
-        :`<label class="field"><span>Photo of your plate</span><input id="ai-photo" type="file" accept="image/*"></label>${sh.photo?`<img src="${sh.photo.url}" alt="Your meal photo" style="border-radius:12px;max-height:220px;object-fit:cover">`:""}<label class="field"><span>Anything the photo can't show? (optional)</span><input id="ai-note" type="text" placeholder="e.g. rice was 1.5 cups, fried in oil" value="${esc(sh.aiNote||"")}"></label>`;
-      const items=ai.items.length?`<div class="list">${ai.items.map((it,i)=>`<div class="item"><label class="check grow"><input id="ai-inc-${i}" type="checkbox" data-f="ai.inc" data-i="${i}" ${it.inc?"checked":""}><div class="grow"><div style="font-weight:600">${esc(it.name)} ${it.fid?`<span class="pill accent">Database</span>`:`<span class="pill sun">Estimate</span>`}</div><div class="small muted">${esc(it.serving)} · <span class="num">${fmt(it.kcal*it.qty)}</span> kcal · <span class="num">${r1(it.p*it.qty)}</span> g P</div></div></label>
+        :`<div class="row"><label class="btn" for="ai-photo">Take photo</label><label class="btn soft" for="ai-photo-g">Choose from gallery</label></div><input id="ai-photo" type="file" accept="image/*" capture="environment" hidden><input id="ai-photo-g" type="file" accept="image/*" hidden>
+          <div class="small muted">Best results: the whole plate in frame, shot at an angle, with a spoon or your hand beside it for scale.</div>${sh.photo?`<img src="${sh.photo.url}" alt="Your meal photo" style="border-radius:12px;max-height:220px;object-fit:cover">`:""}<label class="field"><span>Anything the photo can't show? (optional)</span><input id="ai-note" type="text" placeholder="e.g. rice was 1.5 cups, fried in oil" value="${esc(sh.aiNote||"")}"></label>`;
+      const items=ai.items.length?`<div class="list">${ai.items.map((it,i)=>`<div class="item"><label class="check grow"><input id="ai-inc-${i}" type="checkbox" data-f="ai.inc" data-i="${i}" ${it.inc?"checked":""}><div class="grow"><div style="font-weight:600">${esc(it.name)} ${it.fid?`<span class="pill accent">Database</span>`:`<span class="pill sun">Estimate</span>`}</div><div class="small muted">${it.g0?`≈<span class="num">${fmt(it.g0*it.qty/it.q0)}</span> g · `:""}${esc(it.serving)} · <span class="num">${fmt(it.kcal*it.qty)}</span> kcal · <span class="num">${r1(it.p*it.qty)}</span> g P</div></div></label>
         <div class="stepper"><button class="iconbtn" data-act="ai-qty" data-i="${i}" data-n="-0.5" aria-label="Less">−</button><span class="num small">${r1(it.qty)}×</span><button class="iconbtn" data-act="ai-qty" data-i="${i}" data-n="0.5" aria-label="More">+</button></div></div>`).join("")}</div>
         ${ai.note?`<div class="small muted">${esc(ai.note)}</div>`:""}<button class="btn block" data-act="ai-add">Add ${ai.items.filter(x=>x.inc).length} item(s)</button>`:"";
       body=`${input}<div class="row">${ai.status==="busy"?`<span class="small muted grow">Estimating…</span><button class="btn sm ghost" data-act="ai-stop">Stop</button>`:`<button class="btn" data-act="ai-run" ${sh.tab==="photo"&&!sh.photo?"disabled":""}>Estimate</button>`}</div>
-        ${ai.msg?`<div class="tip cap">${esc(ai.msg)}</div>`:""}${items}<div class="small muted">Matches from the Filipino list use its values. Anything else is a rough estimate: check portions before adding.</div>`;}
+        ${ai.msg?`<div class="tip cap">${esc(ai.msg)}</div>`:""}${items}<div class="small muted">Weights from a photo are rough guesses, especially rice and cooking oil. Fix portions with − / + before adding. Matches from the Filipino list use its values.</div>`;}
   } else if(sh.tab==="quick"){
     body=`<div class="grid2"><label class="field" style="grid-column:1/-1"><span>Name</span><input id="q-name" type="text" placeholder="e.g. Carinderia ulam"></label>
     ${["kcal","p","c","f"].map(k=>`<label class="field"><span>${{kcal:"Calories",p:"Protein (g)",c:"Carbs (g)",f:"Fat (g)"}[k]}</span><input id="q-${k}" type="number" inputmode="decimal" min="0" step="1"></label>`).join("")}</div>
@@ -845,24 +888,27 @@ function addEntry(meal,f,qty,src){const d=ensureDay(S.ui.date);d.foods.push({id:
 let aiCtl=null;
 function foodListText(){return allFoods().map(f=>`${f.id}|${f.name}|${f.serving}|${f.kcal}|${f.p}|${f.c}|${f.f}`).join("\n")}
 function aiErr(e){const c=e&&e.code;
-  if(["not_granted","sampling_disabled","not_declared","capability_disabled","capability_removed"].includes(c)){sampleFn=null;return"AI logging is off for this page. Search and Quick add still work.";}
-  if(c==="images_unavailable"){aiImages=false;return"Photos can't be sent from this view. Try Describe instead.";}
-  if(c==="rate_limited")return"Too many requests right now. Try again in a minute.";
-  if(c==="invalid_json")return"Couldn't read the estimate. Try describing it a little differently.";
-  if(c==="image_rejected")return"That photo couldn't be used. Try a JPG or PNG under 20 MB.";
-  if(c==="refused")return"Claude declined that one. Try rewording it.";
-  if(c==="session_expired")return"Sign in again to use AI logging.";
+  if(c==="no_key")return"Add your Gemini key in More → AI food logging.";
+  if(c==="bad_key")return"Google rejected the key. Check it in More → AI food logging.";
+  if(c==="offline")return"You're offline. AI needs internet; Search works offline.";
+  if(c==="rate_limited")return"Free AI limit reached for now. Try again in a minute, or tomorrow if it keeps happening.";
+  if(c==="no_model")return"The AI models didn't answer. Check More → App version for an update.";
+  if(c==="invalid_json")return"Couldn't read the AI's answer. Try again.";
+  if(c==="image_rejected")return"That photo couldn't be opened. Try another one.";
+  if(c==="refused")return"The AI couldn't use that. Try another photo or use Describe.";
   if(c==="cancelled")return"";return"Something went wrong. Try again.";}
 async function runAI(){
-  const sh=S.ui.sheet;if(!sh||!sampleFn)return;
+  const sh=S.ui.sheet;if(!sh||!aiKey())return;
   const photo=sh.tab==="photo";
   if(!photo){sh.aiText=document.getElementById("ai-text")?.value||"";if(!sh.aiText.trim()){sh.ai.msg="Type what you ate first.";renderSheet();return;}}
   else sh.aiNote=document.getElementById("ai-note")?.value||"";
   const prompt=`You log meals for a Filipino university student. Break the meal into food items.
 Use the FOOD LIST when an item matches and give its id. Otherwise estimate typical Philippine home or carinderia portions and set id to null.
 "qty" is the number of servings of the serving size you give. Common words: kanin/bugas = rice, itlog = egg, tasa = cup, lata = can, piraso/pcs = pieces, sabaw = soup, ulam = viand, manok = chicken, baboy = pork, isda = fish, gulay = vegetables.
-Reply with only JSON: {"items":[{"id":string|null,"name":string,"serving":string,"qty":number,"kcal":number,"p":number,"c":number,"f":number}],"note":string}
-kcal, p (protein g), c (carbs g), f (fat g) are PER ONE SERVING. "note" is one short sentence on the biggest uncertainty, or "".
+Reply with only JSON: {"items":[{"id":string|null,"name":string,"serving":string,"qty":number,"grams":number,"kcal":number,"p":number,"c":number,"f":number}],"note":string}
+kcal, p (protein g), c (carbs g), f (fat g) are PER ONE SERVING. "grams" is your estimate of the total weight of that item as eaten (all servings together).
+For photos, judge size from the plate (a Filipino dinner plate is about 23-25 cm), spoons, forks, hands and cups. Cooked rice weighs about 160 g per cup. Count visible oil or sauce.
+If there is no food, return {"items":[],"note":"No food found."}. "note" is one short sentence on the biggest uncertainty, or "".
 
 FOOD LIST (id|name|serving|kcal|protein|carbs|fat):
 ${foodListText()}
@@ -870,11 +916,11 @@ ${foodListText()}
 ${photo?"The image is a photo of the meal. Estimate each visible item and its portion."+(sh.aiNote?"\nPerson's note: "+sh.aiNote:""):"MEAL: "+sh.aiText}`;
   aiCtl=new AbortController();sh.ai={status:"busy",items:[],msg:"",note:""};renderSheet();
   try{
-    const opts={signal:aiCtl.signal,modelTier:photo?"default":"quick"};if(photo)opts.images=sh.photo.file;
-    const out=await sampleFn.json(prompt,opts);
+    const out=await geminiJSON(prompt,{signal:aiCtl.signal,image:photo?sh.photo.file:null});
     const items=(out&&Array.isArray(out.items)?out.items:[]).map(it=>{const db=it.id&&foodById(String(it.id));const q=Math.max(0.25,Math.min(20,+it.qty||1));
-      if(db)return{fid:db.id,name:db.name,serving:db.serving,qty:q,kcal:db.kcal,p:db.p,c:db.c,f:db.f,inc:true};
-      return{fid:null,name:String(it.name||"Food").slice(0,80),serving:String(it.serving||"1 serving").slice(0,60),qty:q,kcal:Math.max(0,+it.kcal||0),p:Math.max(0,+it.p||0),c:Math.max(0,+it.c||0),f:Math.max(0,+it.f||0),inc:true};});
+      const g0=Math.max(0,+it.grams||0);
+      if(db)return{fid:db.id,name:db.name,serving:db.serving,qty:q,q0:q,g0,kcal:db.kcal,p:db.p,c:db.c,f:db.f,inc:true};
+      return{fid:null,q0:q,g0,name:String(it.name||"Food").slice(0,80),serving:String(it.serving||"1 serving").slice(0,60),qty:q,kcal:Math.max(0,+it.kcal||0),p:Math.max(0,+it.p||0),c:Math.max(0,+it.c||0),f:Math.max(0,+it.f||0),inc:true};});
     if(S.ui.sheet!==sh)return;
     sh.ai={status:"idle",items,msg:items.length?"":"No foods found. Add a bit more detail.",note:out&&out.note?String(out.note).slice(0,200):""};
   }catch(e){if(S.ui.sheet!==sh)return;sh.ai={status:"idle",items:[],msg:aiErr(e),note:""};}
@@ -952,6 +998,13 @@ const ACT={
   "export":async()=>{const name=`lakas-backup-${todayKey()}.json`,blob=new Blob([backupJSON()],{type:"application/json"});
     try{const file=new File([blob],name,{type:"application/json"});if(navigator.canShare&&navigator.canShare({files:[file]})){await navigator.share({files:[file],title:"Lakas backup"});return;}}catch(e){if(e&&e.name==="AbortError")return;}
     try{const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},1500);toast("Backup downloaded.");}catch(e){toast("Couldn't save a file here. Use Copy backup as text.");}},
+  "ai-save":async(el)=>{const inp=document.getElementById("ai-key");const k=(inp&&inp.value||"").trim();if(k.length<20){toast("That doesn't look like a full key. Copy it again.");return;}
+    try{localStorage.setItem(AI_KEY,k);}catch(e){toast("Couldn't save the key on this phone.");return;}
+    el.disabled=true;el.textContent="Testing…";
+    try{const r=await geminiJSON('Reply with only this JSON: {"ok":true}');if(!r||r.ok!==true)throw aiErrObj("invalid_json");toast("AI is ready. Try Food → + Add → Photo.");}
+    catch(e){if(e.code==="bad_key"){try{localStorage.removeItem(AI_KEY)}catch(_){}}toast(aiErr(e)||"Test failed.");}
+    render();},
+  "ai-remove":()=>{try{localStorage.removeItem(AI_KEY);localStorage.removeItem(AI_MODEL);}catch(e){}render();toast("Key removed from this phone.");},
   "copy-backup":async()=>{try{await navigator.clipboard.writeText(backupJSON());toast("Backup copied. Paste it into Notes or Messenger to keep it.");}catch(e){toast("Couldn't copy here. Use Save backup file.");}},
   "paste-restore":()=>{const t=document.getElementById("paste-backup")?.value||"";restoreFrom(t);},
   "whatsnew-ok":()=>{S.ui.whatsNew=false;try{localStorage.setItem("lakas-seen",APP_VERSION);}catch(e){}render();},
@@ -972,7 +1025,7 @@ document.addEventListener("keydown",e=>{if(e.key==="Escape"&&S.ui.sheet)closeShe
 document.addEventListener("input",e=>{if(e.target.id==="sheet-q"){S.ui.sheet.q=e.target.value;renderResults();}});
 document.addEventListener("change",e=>{
   const el=e.target;
-  if(el.id==="ai-photo"){const f=el.files&&el.files[0];const sh=S.ui.sheet;if(!f||!sh)return;if(sh.photo)URL.revokeObjectURL(sh.photo.url);sh.aiNote=document.getElementById("ai-note")?.value||sh.aiNote;sh.photo={file:f,url:URL.createObjectURL(f)};sh.ai={status:"idle",items:[],msg:"",note:""};renderSheet();return;}
+  if(el.id==="ai-photo"||el.id==="ai-photo-g"){const f=el.files&&el.files[0];const sh=S.ui.sheet;if(!f||!sh)return;if(sh.photo)URL.revokeObjectURL(sh.photo.url);sh.aiNote=document.getElementById("ai-note")?.value||sh.aiNote;sh.photo={file:f,url:URL.createObjectURL(f)};sh.ai={status:"idle",items:[],msg:"",note:""};renderSheet();runAI();return;}
   if(el.id==="import-file"){const f=el.files&&el.files[0];if(!f)return;const rd=new FileReader();rd.onload=()=>restoreFrom(String(rd.result));rd.readAsText(f);el.value="";return;}
   const f=el.dataset.f;if(!f)return;
   if(f.startsWith("day.")){const k=f.slice(4),d=ensureDay(S.ui.date);if(el.type==="checkbox")d[k]=el.checked;else d[k]=el.value===""?null:+el.value;touch("d-"+S.ui.date);safeRender();return;}
