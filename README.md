@@ -1,6 +1,6 @@
 # Lakas
 
-A free recomp tracker for Android: Filipino food logging, a home barbell
+A free recomp tracker for Android: Filipino food logging (about 300 foods, including Jollibee, McDo, Chowking, Mang Inasal and local brands, plus barcode lookup), a home barbell
 program with progression, and an adaptive calorie estimate. No account,
 no ads, no paywall. Your data stays on your phone.
 
